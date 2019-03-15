@@ -1,0 +1,417 @@
+---
+title: "Exercise 2"
+output: pdf_document
+---
+
+### Question 1
+
+In order to create a strong pricing model, many factors were considered.  Ultimately, I was able to create a better model than the previous baseline.  This was specifically possible due to interaction variables of lot size*age, rooms*bedrooms, and rooms*bathrooms.  These interactions were especially important, as they combined some of the most important variables to create a more thorough understanding of price.  Age certainly could erode price regardless of lot size, and people are interested in the ratio of rooms to bedrooms or bathrooms in order to know how much living space is available.  Below are the plots of RMSE for the baseline and the new model, simulated 100 times to create 100 observations.
+```{r include=FALSE}
+#loading library
+library(tidyverse)
+library(mosaic)
+library(FNN)
+
+#loading data
+data(SaratogaHouses)
+
+#the medium model to outperform (baseline for comparison)
+lm_medium = lm(price ~ lotSize + age + livingArea + pctCollege + bedrooms + 
+                 fireplaces + bathrooms + rooms + heating + fuel + centralAir, data=SaratogaHouses)
+
+#my "hand-built" model to test
+lm_model = lm(price ~ landValue*age+ lotSize+ livingArea+rooms*bedrooms+rooms*bathrooms+centralAir*age, data=SaratogaHouses)
+
+#stock function to calculate root mean square error
+rmse = function(y, yhat) {
+  sqrt( mean( (y - yhat)^2 ) )
+}
+#####
+# part 1: build a model to outperform the benchmark model
+# The model hand build
+#   y: price
+#   x variables: - fireplaces - rooms - heating -fuel -waterfront -sewer
+###
+
+####
+# Compare out-of-sample predictive performance
+####
+
+#count number of obs
+n = nrow(SaratogaHouses)
+
+rmse_vals = do(100)*{
+  
+  # re-split into train and test cases
+  n_train = round(0.8*n)  # round to nearest integer
+  n_test = n - n_train
+  train_cases = sample.int(n, n_train, replace=FALSE)
+  test_cases = setdiff(1:n, train_cases)
+  saratoga_train = SaratogaHouses[train_cases,]
+  saratoga_test = SaratogaHouses[test_cases,]
+  
+  # fit to this training set
+  
+  #baseline model for comparison first
+  lm_medium = lm(price ~ lotSize + age + livingArea + pctCollege + bedrooms + 
+                   fireplaces + bathrooms + rooms + heating + fuel + centralAir, data=saratoga_train)
+  
+  #hand-built model
+  lm_model = lm(price ~ landValue*age+ lotSize+ livingArea+rooms*bedrooms+rooms*bathrooms+centralAir*age, data=saratoga_train)
+  
+  #predict on this testing set
+  yhat_baseline_test = predict(lm_medium, saratoga_test)
+  yhat_model_test = predict(lm_model, saratoga_test)
+  
+  c(rmse(saratoga_test$price, yhat_baseline_test),
+    rmse(saratoga_test$price, yhat_model_test))
+}
+
+rmse_vals
+colMeans(rmse_vals)
+test_case <- seq(1,100,by=1)
+rmse_vals = cbind(rmse_vals, test_case)
+colnames(rmse_vals) <- c("baseline" , "model" , "test case")
+
+```
+
+```{r echo=FALSE}
+plot(x = test_case, y = rmse_vals$baseline)+title(main="RMSE values for baseline model")
+plot(x = test_case, y = rmse_vals$model)+title(main="RMSE values for new model")
+```
+The baseline model has RMSE that ranges from approximately 60,000 to 75,000, while the new model has RMSE that ranges from approximately 50,000 to 70,000.  So, on average, RMSE for the new model is lower.  Hence I recommend moving to my new model in order to generate more accurate market values for housing.  Furthermore, I was able to create a KNN model that continued to decrease RMSE.  This is shown below.
+```{r include=FALSE}
+#table to store average rmse for each K, starting from K = 2 
+KNN_rmse <- data.frame(matrix(ncol = 2, nrow = 0))
+
+
+for (k in 3:30){
+  #count number of obs
+  n = nrow(SaratogaHouses)
+  
+  #inner loop to calculate average over randomness of split
+  rmse_vals = do(100)* {
+    
+    # re-split into train and test cases
+    n_train = round(0.8*n)  # round to nearest integer
+    n_test = n - n_train
+    train_cases = sample.int(n, n_train, replace=FALSE)
+    test_cases = setdiff(1:n, train_cases)
+    saratoga_train = SaratogaHouses[train_cases,]
+    saratoga_test = SaratogaHouses[test_cases,]  
+    
+    # construct the training and test-set feature matrices
+    Xtrain = model.matrix(~(price + landValue+age+ lotSize+ livingArea+rooms+bedrooms+bathrooms+centralAir) - 1, data=saratoga_train)
+    Xtest = model.matrix(~(price+ landValue+age+ lotSize+ livingArea+rooms+bedrooms+bathrooms+centralAir) - 1, data=saratoga_test)
+    
+    # training and testing set responses
+    ytrain = saratoga_train$price
+    ytest = saratoga_test$price
+    
+    # now rescale/standardize
+    scale_train = apply(Xtrain, 2, sd)  # calculate std dev for each column
+    Xtilde_train = scale(Xtrain, scale = scale_train)
+    Xtilde_test = scale(Xtest, scale = scale_train)  # use the training set scales
+    
+    # fit the model
+    knn_model = knn.reg(Xtilde_train, Xtilde_test, ytrain, k = k)
+    
+    # calculate test-set performance
+    rmse(ytest, knn_model$pred)
+  }
+  #print(colMeans(rmse_vals))
+  #newK<-data.frame( k , colMeans(rmse_vals))
+  
+  KNN_rmse <- rbind( KNN_rmse , c(k , colMeans(rmse_vals)))
+}
+
+colnames(KNN_rmse) <- c("K_value", "average_RMSE")
+KNN_rmse
+```
+
+```{r echo=FALSE}
+ggplot(data = KNN_rmse, aes(x = K_value, y = average_RMSE)) + 
+  geom_point(shape = "O") 
+
+```
+With the KNN regression, RMSE was lowered to approximately 32500 when using a small K value.  To conclude, I see strong improvement within the new model, and recommend the company switches to it immediately to improve performance.
+
+### Question 2
+```{r include=FALSE}
+library(tidyverse)
+library(mosaic)
+library(class)
+library(FNN)
+library(foreach)
+
+data<-read.csv("~/Downloads/brca.csv")
+radiologist13<-subset(data,radiologist=='radiologist13')
+radiologist34<-subset(data,radiologist=='radiologist34')
+radiologist66<-subset(data,radiologist=='radiologist66')
+radiologist89<-subset(data,radiologist=='radiologist89')
+radiologist95<-subset(data,radiologist=='radiologist95')
+newradiologist13 <- radiologist13[ which(radiologist13$age=='age4049' &
+                                           radiologist13$symptoms=='0'&
+                                           radiologist13$menopause=='premeno' &
+                                           radiologist13$history=='0' &
+                                           radiologist13$density=='density3' 
+                                             ), ]
+newradiologist34 <- radiologist34[ which(radiologist34$age=='age4049' &
+                                           radiologist34$symptoms=='0'&
+                                           radiologist34$menopause=='premeno' &
+                                           radiologist34$history=='0' &
+                                           radiologist34$density=='density3' 
+), ]
+newradiologist66 <- radiologist66[ which(radiologist66$age=='age4049' &
+                                           radiologist66$symptoms=='0'&
+                                           radiologist66$menopause=='premeno' &
+                                           radiologist66$history=='0' &
+                                           radiologist66$density=='density3' 
+), ]
+newradiologist89 <- radiologist89[ which(radiologist89$age=='age4049' &
+                                           radiologist89$symptoms=='0'&
+                                           radiologist89$menopause=='premeno' &
+                                           radiologist89$history=='0' &
+                                           radiologist89$density=='density3' 
+), ]
+newradiologist95 <- radiologist95[ which(radiologist95$age=='age4049' &
+                                           radiologist95$symptoms=='0'&
+                                           radiologist95$menopause=='premeno' &
+                                           radiologist95$history=='0' &
+                                           radiologist95$density=='density3' 
+), ]
+```
+
+In order to test how conservative the doctors are, it is crucial that we hold the risk factors constant for each doctor.  So, I decided to hold each of the factors in the following states: age between 40-49, breast density at level 3, pre-menopausal, no symptoms, and no family history of breast cancer.  I chose these specific states in order to create an environment where it was a feasible for all of the doctors to have the data, as they were all relatively common traits. This fixed nature of the data allowed us to view how conservative each would be in a typical situation.  The results are as follows:
+
+```{r echo=FALSE}
+newradiologist13$recall13 = ifelse(newradiologist13$recall=='1', 1, 0)
+table13=table(newradiologist13$recall13)
+table13
+5/sum(table13)
+```
+Given the fixed variables, radiologist #13 recalls 25% of patients.
+
+```{r echo=FALSE}
+newradiologist34$recall34 = ifelse(newradiologist34$recall=='1', 1, 0)
+table34=table(newradiologist34$recall34)
+table34
+2/sum(table34)
+```
+Given the fixed variables, radiologist #34 recalls 12.5% of patients.
+
+```{r echo=FALSE}
+newradiologist66$recall66 = ifelse(newradiologist66$recall=='1', 1, 0)
+table66=table(newradiologist66$recall66)
+table66
+4/sum(table66)
+```
+Given the fixed variables, radiologist #66 recalls 22.22% of patients.
+
+```{r echo=FALSE}
+newradiologist89$recall89 = ifelse(newradiologist89$recall=='1', 1, 0)
+table89=table(newradiologist89$recall89)
+table89
+4/sum(table89)
+```
+Given the fixed variables, radiologist #89 recalls 19.05% of patients.
+
+```{r echo=FALSE}
+newradiologist95$recall95 = ifelse(newradiologist95$recall=='1', 1, 0)
+table95=table(newradiologist95$recall95)
+table95
+3/sum(table95)
+```
+Lastly, given the fixed variables, radiologist #95 recalls 17.65% of patients.
+
+We can conclude from these results an ordering of conservativeness among the 5 doctors.  From highest to lowest: #13, #66, #89, #95, #34.  This is just one variation of many potential samples of fixed variables, but it is a good indicator of general conservativeness of the 5 doctors.
+
+```{r include=FALSE}
+lm_modelbase = lm(cancer~recall, data=data)
+lm_modelhistory= lm(cancer~recall+history, data=data)
+lm_modelage=lm(cancer~recall+age, data=data)
+lm_modelsymptoms=lm(cancer~recall+symptoms, data=data)
+lm_modelmenopause=lm(cancer~recall+menopause, data=data)
+lm_modeldensity=lm(cancer~recall+density,data=data)
+```
+
+As for the question of if the doctors should be weighing certain clinical factors more heavily than they currently are, the answer is a resounding yes.  By using a linear probability model of recall predicting cancer, I was able to deduce that given that the patient is recalled, there is approximately a 14.8% chance of them having cancer, displayed here:
+```{r echo=FALSE}
+cbase=coef(lm_modelbase)
+probbase=sum(cbase)
+probbase
+```
+This gave me a baseline for how often a doctor recalled.  Next, I created 5 separate linear probability models predicting cancer given recall and one of the following: family history, age, symptoms, menopause testing, and breast density classification.  The results are as follows:
+```{r echo=FALSE}
+chistory=coef(lm_modelhistory)
+probhistory=sum(chistory)
+probhistory
+```
+Given recall and family history, the odds of the patient having cancer was approximately 15.48%.
+```{r echo=FALSE}
+cage=coef(lm_modelage)
+probage=sum(cage)
+probage
+```
+Given recall and age, the odds of the patient having cancer was approximately 17.93%.
+```{r echo=FALSE}
+csymptoms=coef(lm_modelsymptoms)
+probsymptoms=sum(csymptoms)
+probsymptoms
+```
+Given recall and symptoms, the odds of the patient having cancer was approximately 16.02%.
+```{r echo=FALSE}
+cmenopause=coef(lm_modelmenopause)
+probmenopause=sum(cmenopause)
+probmenopause
+```
+Given recall and menopause results, the odds of the patient having cancer was approximately 18.38%.
+```{r echo=FALSE}
+cdensity=coef(lm_modeldensity)
+probdensity=sum(cdensity)
+probdensity
+
+```
+Given recall and breast density classification, the odds of the patient having cancer was approximately 20.5%.
+
+Overall, the doctors certainly are not expected to be perfect.  However, the results from age, menopause testing, and breast density classification seem troubling, specifically the last two.  The doctors should focus on these three areas more when making a decision about recalling a patient.
+
+### Question 3
+First, lets create a condition for virality in the data, and make a table out of it.
+```{r include=FALSE}
+data<-read.csv("~/Downloads/online_news.csv")
+head(data)
+```
+
+```{r echo=FALSE}
+##drop the unused variable
+data<- data[-c(1) ]
+
+## define threshold for share -> viral
+data$viral = ifelse(data$shares > 1400, 1, 0)
+nulltable=table(data$viral)
+nulltable
+nullrate=20082/sum(nulltable)
+n = nrow(data)
+```
+Using this table, we can create the frequency at which the null works:
+```{r}
+nullrate
+```
+So, we would hope to clear this when creating a model.  Now, I will attempt to create two types of models: one which uses a threshold to account for virality and one which directly predicts the viral nature using my variable, "viral".  Both models will be linear regressions with very similar predictors.  The only difference will be what they are predicting: one predicts "shares" and the other predicts how viral ("viral").
+```{r include=FALSE}
+#function to return the confusion matrix for threshold 1st/classification 2nd
+classification_confusion_matrix <- function(lm_model , data){
+  ###Predictions in sample
+  yhat_test = predict(lm_model, data)
+  class_test = ifelse(yhat_test > 0.5, 1, 0)
+  ###Create the matrix
+  matrix = table(y = data$viral, yhat = class_test)
+  return(matrix)
+}
+
+#function to return the confusion matrix for classification 1st/ threshold 2nd
+threshold_confusion_matrix <- function(lm_model , data){
+  ###Predictions in sample
+  yhat_test = predict(lm_model, data)
+  class_test = ifelse(yhat_test > 1400, 1, 0)
+  ###Create the matrix
+  matrix = table(y = data$viral, yhat = class_test)
+  return(matrix)
+}
+
+##function to calculate error rate
+error_rate = function(matrix){
+  (matrix[2,1] + matrix[1,2]) / sum(matrix)
+}
+
+##function to calculate true positive rate
+TPR = function(matrix){
+  matrix[2,2] / sum(matrix[2,])
+}
+
+##function to calculate false positive rate
+FPR = function(matrix){
+  matrix [1,2] / sum(matrix[,2])
+}
+
+##function to rearrange values into matrix
+toMatrix = function(a){
+  matrix <- a[c(1:4)]
+  dim(matrix) <- c(2,2)
+  return(matrix)
+}
+
+performance = do(100)*{
+  
+  ## Split into training and testing sets
+  n_train = round(0.8*n)  
+  n_test = n - n_train
+  train_cases = sample.int(n, n_train, replace=FALSE)
+  test_cases = setdiff(1:n, train_cases)
+  data_train = data[train_cases,]
+  data_test = data[test_cases,]
+  
+  ## regress first, threshold second for LPM without max/min polarity and global rate (case 1)
+  lpm_model1 = lm(shares ~(.-viral-abs_title_sentiment_polarity-
+                             weekday_is_monday-weekday_is_thursday-
+                             data_channel_is_socmed-num_imgs) , data=data_train)
+  
+
+  
+  ############################
+  ##### Now for (2) case #####
+  ############################
+  
+  ### threshold first, regress second for LPM  (case 2)
+  lpm_model2 = lm(viral ~ (.-viral-abs_title_sentiment_polarity-
+                             weekday_is_monday-weekday_is_thursday-
+                             data_channel_is_socmed-num_imgs), data=data_train)
+  
+  #out of sample confusion matrix for model 1
+  matrix1 = threshold_confusion_matrix(lpm_model1 , data_test)
+  #out of sample confusion matrix for model 2
+
+  #out of sample confusion matrix for model 3
+  matrix2 = classification_confusion_matrix(lpm_model2 , data_test)
+  #out of sample confusion matrix for model 4
+
+  
+  #pushing values in
+  c( matrix1, matrix2)
+}
+```
+Let us begin with model 1.  Here is the confusion matrix:
+```{r echo=FALSE}
+matrix1
+```
+Here is the error rate:
+```{r echo=FALSE}
+error_rate(matrix1)
+```
+Here is the true positive rate:
+```{r echo=FALSE}
+TPR(matrix1)
+```
+Here is the false positive rate:
+```{r echo=FALSE}
+FPR(matrix1)
+```
+Let us move on to model 2.  Here is the confusion matrix:
+```{r echo=FALSE}
+matrix2
+```
+Here is the error rate:
+```{r echo=FALSE}
+error_rate(matrix2)
+```
+Here is the true positive rate:
+```{r ehco=FALSE}
+TPR(matrix2)
+```
+Here is the false positive rate:
+```{r echo=FALSE}
+FPR(matrix2)
+```
+
+So, it is clear model 2 is superior here, as model 1 is not even better than the null model.  In this instance, using the threshold first and regressing second seems dominant.  This might be true because it is easier to directly predict something (state of virality) than to do it in a roundabout 1 such as in model 1.
